@@ -24,8 +24,8 @@ angular.module('app', ['autofill-directive', 'ngRoute', 'app.service'])
     var pValid = angular.element("<p id='warningMsg'/>");
     pValid.text("");
     //check to see if the location entered is invalid
-    //if location is invalid, then append invalid message 
-    // else, append a blank message 
+    //if location is invalid, then append invalid message
+    // else, append a blank message
     if (isInvalid) {
       $element.find("main-area").append(pInvalid);
     } else {
@@ -60,31 +60,96 @@ angular.module('app', ['autofill-directive', 'ngRoute', 'app.service'])
       directionsService.route(request, function(response, status) {
         // successfully get the direction based on locations
         if (status === google.maps.DirectionsStatus.OK) {
-          $scope.geoCodeNotSuccessful=false;  
+          $scope.geoCodeNotSuccessful=false;
           //Update the map on index.html
           directionsDisplay.setDirections(response);
 
+
+          // - new google filtering - //
+
+          // convert metric distance to miles
+
+          distance = response.routes[0].legs[0].distance.value/1609.34;
+
+          // determine the distance between queries
+          var distanceBetweenQueries;
+
+          if (distance <= 20) {
+            distanceBetweenQueries = distance/10;
+          } else if (distance <= 500) {
+            distanceBetweenQueries = distance/20;
+          } else {
+            // default to yelp's max radius (25mi)
+            distanceBetweenQueries = 25;
+          }
+
+          /*
+          * create polyfill line and get points at 20mi intervals
+          * push to coords array, include startint latling
+          */
+
+          var coords = []
+
+          legs = response.routes[0].legs;
+          legs.forEach(function(item) {
+            steps = item.steps;
+            steps.forEach(function(item) {
+              path = item.path;
+              path.forEach(function(item) {
+                polyline.getPath().push(item);
+                bounds.extend(item);
+              });
+            });
+          });
+
+          polyline.setMap(map);
+          map.fitBounds(bounds);
+
+          (polyline.GetPointsAtDistance(distanceBetweenQueries*1609.34)).forEach(function(x){
+
+            var obj = {
+              location: {
+                coordinate : {
+                  latitude: x.k,
+                  longitude: x.D
+                }
+              }
+            };
+            coords.push(obj);
+          });
+
+          // push the starting position
+
+          coords.push({
+              location: {
+                coordinate : {
+                  latitude: response.routes[0].legs[0].start_location.k,
+                  longitude: response.routes[0].legs[0].start_location.D
+                }
+              }
+            });
+
+          //   var obj = [x.k, x.D];
+          //   coords.push(obj);
+          // });
+
+          // // push the starting position
+
+          // coords.push([response.routes[0].legs[0].start_location.k,
+          //         response.routes[0].legs[0].start_location.D]);
+
+
+
+
           console.log("DIRECTIONS RESPONSE: ", response);
-          console.log("LENGTH: ", response.routes[0].overview_path.length);
-          console.log("OVERVIEW PATH: ", response.routes[0].overview_path);
 
           // objects to be sent to backend
           var sendData = {
-            distance: response.routes[0].legs[0].distance.text,
+            distance: distance,
             optionFilter: $scope.optionFilter,
-            waypoints: {}
+            waypoints: coords
           };
 
-          //gather all points along route returned by Google in overview_path property
-          //and insert them into waypoints object to send to server
-          for (var j = 0; j < response.routes[0].overview_path.length; j++) {
-            sendData.waypoints[j] = response.routes[0].overview_path[j].k + "," + response.routes[0].overview_path[j].D;
-          }
-
-          console.log("sendData: ", sendData);
-          $scope.appendWarningMsg($scope.geoCodeNotSuccessful); // append the blank (no warning) message to main.html
-
-          // Send all waypoints along route to server
           Maps.sendPost(sendData)
           .then(function(res){
             console.log("PROMISE OBJ: ", res.data.results);
